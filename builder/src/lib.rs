@@ -32,6 +32,7 @@ fn construct_builder(builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
     }
 
     let builder = quote! {
+        #[derive(Clone)]
         pub struct #builder_name {
             #(#builder_fields)*
         }
@@ -74,9 +75,9 @@ fn impl_builder_set_funcs(builder_name: &Ident, s: &syn::DataStruct) -> TokenStr
         let field_name = &f.ident.as_ref().unwrap();
         let expanded = quote! {
             impl #builder_name {
-                pub fn #field_name(&mut self, #field_name: #ty) -> &mut Self {
+                pub fn #field_name(&mut self, #field_name: #ty) -> Self {
                     self.#field_name = Some(#field_name);
-                    self
+                    self.clone()
                 }
             }
         };
