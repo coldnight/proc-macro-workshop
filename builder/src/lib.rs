@@ -29,7 +29,7 @@ fn construct_builder(builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
 
         if let Some(ty) = try_extract_option(ty) {
             builder_fields.push(quote!{
-                #field_name: Option<#ty>,
+                #field_name: std::option::Option<#ty>,
             });
         } else if let Some(_) = try_extract_vec(ty) {
             builder_fields.push(quote!{
@@ -37,7 +37,7 @@ fn construct_builder(builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
             });
         } else {
             builder_fields.push(quote!{
-                #field_name: Option<#ty>,
+                #field_name: std::option::Option<#ty>,
             });
         }
     }
@@ -62,7 +62,7 @@ fn add_builder_method_to_target(name: &Ident, builder_name: &Ident, s: &syn::Dat
             });
         } else {
             builder_init.push(quote!{
-                #field_name: None,
+                #field_name: std::option::Option::None,
             });
         }
 
@@ -158,7 +158,7 @@ fn impl_field_setter(builder_name: &Ident, f: &syn::Field) -> TokenStream {
         let expanded = quote! {
             impl #builder_name {
                 pub fn #field_name(&mut self, #field_name: #ty) -> Self {
-                    self.#field_name = Some(#field_name);
+                    self.#field_name = std::option::Option::Some(#field_name);
                     self.clone()
                 }
             }
@@ -234,8 +234,8 @@ fn impl_builder_dot_build(name: &Ident, builder_name: &Ident, s: &syn::DataStruc
         } else {
             checks.push(quote!{
                 let #field_name = match self.#field_name {
-                    Some(f) => f,
-                    None => return None,
+                    std::option::Option::Some(f) => f,
+                    std::option::Option::None => return std::option::Option::None,
                 }
             });
         }
@@ -246,13 +246,13 @@ fn impl_builder_dot_build(name: &Ident, builder_name: &Ident, s: &syn::DataStruc
 
     let tokens = quote! {
         impl #builder_name {
-            pub fn build(self) -> Option<#name> {
+            pub fn build(self) -> std::option::Option<#name> {
                 #(#checks);*;
 
                 let ret = #name {
                     #(#fields)*
                 };
-                Some(ret)
+                std::option::Option::Some(ret)
 
             }
         }
