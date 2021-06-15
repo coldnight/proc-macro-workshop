@@ -206,7 +206,8 @@ fn parse_each_attr_value(attr: &syn::Attribute) -> Result<Option<Ident>, syn::Er
                         return Ok(Some(ident));
                     }
                 } else {
-                    return Err(syn::Error::new_spanned(arg_name, "expected `builder(each = \"...\")`".to_owned()));
+                    let start = attr.path.segments.first().unwrap().ident.span();
+                    return Err(syn::Error::new(start, "expected `builder(each = \"...\")`".to_owned()));
                 }
             }
         }
