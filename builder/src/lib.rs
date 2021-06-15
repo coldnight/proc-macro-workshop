@@ -1,6 +1,6 @@
 use proc_macro::{TokenStream,};
 use quote::quote;
-use syn::{parse, DeriveInput, Data, parse_str, Ident};
+use syn::{parse, DeriveInput, Data, parse_str, Ident, self};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -26,9 +26,17 @@ fn construct_builder(builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
     for f in s.fields.iter() {
         let ty = &f.ty;
         let field_name = &f.ident.as_ref().unwrap();
-        builder_fields.push(quote!{
-            #field_name: Option<#ty>,
-        });
+
+
+        if let Some(ty) = try_extract_option(ty) {
+            builder_fields.push(quote!{
+                #field_name: Option<#ty>,
+            });
+        } else {
+            builder_fields.push(quote!{
+                #field_name: Option<#ty>,
+            });
+        }
     }
 
     let builder = quote! {
@@ -47,6 +55,7 @@ fn add_builder_method_to_target(name: &Ident, builder_name: &Ident, s: &syn::Dat
         builder_init.push(quote!{
             #field_name: None,
         });
+
     }
 
     let builder = quote! {
@@ -61,6 +70,32 @@ fn add_builder_method_to_target(name: &Ident, builder_name: &Ident, s: &syn::Dat
     builder.into()
 }
 
+fn try_extract_option(ty: &syn::Type) -> Option<&syn::Type> {
+    match ty {
+        syn::Type::Path(pth) => {
+            if let Some(i) = pth.path.segments.first() {
+                if  i.ident == "Option" {
+                    match &i.arguments {
+                        syn::PathArguments::AngleBracketed(args) => {
+                            if let Some(a) = args.args.first() {
+                                match a {
+                                    syn::GenericArgument::Type(ty) => {
+                                        return Some(ty)
+                                    },
+                                    _ => {},
+                                }
+                            }
+                        },
+                        _ => {},
+                    };
+                }
+            }
+        },
+        _ => {},
+    }
+    return None;
+}
+
 fn impl_builder(name: &Ident, builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
     let mut tokens = TokenStream::new();
     tokens.extend(impl_builder_set_funcs(builder_name, s));
@@ -71,7 +106,11 @@ fn impl_builder(name: &Ident, builder_name: &Ident, s: &syn::DataStruct) -> Toke
 fn impl_builder_set_funcs(builder_name: &Ident, s: &syn::DataStruct) -> TokenStream {
     let mut tokens = TokenStream::new();
     for f in s.fields.iter() {
-        let ty = &f.ty;
+        let ty = if let Some(ty) = try_extract_option(&f.ty) {
+            ty
+        } else {
+            &f.ty
+        };
         let field_name = &f.ident.as_ref().unwrap();
         let expanded = quote! {
             impl #builder_name {
@@ -93,13 +132,20 @@ fn impl_builder_dot_build(name: &Ident, builder_name: &Ident, s: &syn::DataStruc
     let mut fields = vec![];
 
     for f in s.fields.iter() {
+        let ty = &f.ty;
         let field_name = &f.ident.as_ref().unwrap();
-        checks.push(quote!{
-            let #field_name = match self.#field_name {
-                Some(f) => f,
-                None => return None,
-            }
-        });
+        if let Some(_) = try_extract_option(ty) {
+            checks.push(quote!{
+                let #field_name = self.#field_name;
+            });
+        } else {
+            checks.push(quote!{
+                let #field_name = match self.#field_name {
+                    Some(f) => f,
+                    None => return None,
+                }
+            });
+        }
         fields.push(quote!{
            #field_name: #field_name,
         });
