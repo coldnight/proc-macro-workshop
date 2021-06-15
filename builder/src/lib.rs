@@ -1,4 +1,4 @@
-use proc_macro::{TokenStream,};
+use proc_macro::{TokenStream};
 use quote::quote;
 use syn::{parse, DeriveInput, Data, parse_str, Ident, self};
 
@@ -171,37 +171,47 @@ fn try_impl_field_repeat(builder_name: &Ident, f: &syn::Field) -> Option<TokenSt
     let field_name = &f.ident.as_ref().unwrap();
     if let Some(ty) = try_extract_vec(&f.ty) {
         for attr in f.attrs.iter() {
-            if let Some(field_each) = parse_each_attr_value(attr) {
-                let expanded = quote!{
-                    impl #builder_name {
-                        pub fn #field_each(&mut self, #field_each: #ty) -> Self {
-                            self.#field_name.push(#field_each);
-                            self.clone()
-                        }
-                    }
-                };
-                return Some(expanded.into());
+            match parse_each_attr_value(attr) {
+                Ok(v) => {
+                    if let Some(field_each) = v {
+                        let expanded = quote!{
+                            impl #builder_name {
+                                pub fn #field_each(&mut self, #field_each: #ty) -> Self {
+                                    self.#field_name.push(#field_each);
+                                    self.clone()
+                                }
+                            }
+                        };
+                        return Some(expanded.into());
             }
+                },
+                Err(v) => {
+                    return Some(v.to_compile_error().into());
+                },
+            };
         }
     }
     None
 }
 
-fn parse_each_attr_value(attr: &syn::Attribute) -> Option<Ident> {
+fn parse_each_attr_value(attr: &syn::Attribute) -> Result<Option<Ident>, syn::Error> {
     if let Some(seg) = attr.path.segments.first() {
         if seg.ident == "builder" {
-            let args = attr.parse_args().unwrap();
+            let args = attr.parse_args()?;
             if let syn::Meta::NameValue(values) = args {
-                if values.path.segments.first().unwrap().ident == "each" {
+                let arg_name = &values.path.segments.first().unwrap().ident;
+                if arg_name == "each" {
                     if let syn::Lit::Str(name) = values.lit {
-                        let ident: Ident = parse_str(&name.value()).unwrap();
-                        return Some(ident);
+                        let ident: Ident = parse_str(&name.value())?;
+                        return Ok(Some(ident));
                     }
+                } else {
+                    return Err(syn::Error::new_spanned(arg_name, "expected `builder(each = \"...\")`".to_owned()));
                 }
             }
         }
     }
-    return None
+    return Ok(None)
 }
 
 // pub fn build() -> Result<T, String>
