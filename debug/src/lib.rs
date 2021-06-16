@@ -10,6 +10,9 @@ pub fn derive(input: TokenStream) -> TokenStream {
 
     let mut debug_fields = vec![];
 
+    let mut params = vec![];
+    let mut wheres = vec![];
+
     if let syn::Data::Struct(ds) = ast.data {
         if let syn::Fields::Named(fields) = ds.fields {
             for field in fields.named.iter() {
@@ -31,15 +34,18 @@ pub fn derive(input: TokenStream) -> TokenStream {
                     field(stringify!(#field_name), &self.#field_name)
                 });
             }
-        }
-    }
-    let mut params = vec![];
-    let mut wheres = vec![];
-    for p in ast.generics.params.iter() {
-        if let syn::GenericParam::Type(t) = p {
-            let name = &t.ident;
-            params.push(name);
-            wheres.push(quote!(#name: std::fmt::Debug))
+
+            for p in ast.generics.params.iter() {
+                if let syn::GenericParam::Type(t) = p {
+                    let name = &t.ident;
+                    params.push(name);
+                    if is_param_wrapped_phantom(name, &fields) {
+                        wheres.push(quote!(std::marker::PhantomData<#name>: std::fmt::Debug))
+                    } else {
+                        wheres.push(quote!(#name: std::fmt::Debug))
+                    }
+                }
+            }
         }
     }
     if params.len() > 0 {
@@ -91,4 +97,38 @@ fn parse_debug_attr_value(attr: &syn::Attribute) -> Result<Option<syn::LitStr>, 
         }
     }
     return Ok(None);
+}
+
+
+fn is_param_wrapped_phantom(name: &syn::Ident, fields: &syn::FieldsNamed) -> bool {
+    let mut ret = false;
+    for field in fields.named.iter() {
+        let field_ty = &field.ty;
+        if let syn::Type::Path(ty_pth) = field_ty {
+            for seg in ty_pth.path.segments.iter() {
+                // type directly use
+                if &seg.ident == name {
+                    return false;
+                }
+                if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                    for item in args.args.iter() {
+                        if let syn::GenericArgument::Type(ty) = item {
+                            if let syn::Type::Path(ty_path) = ty {
+                                if &(ty_path.path.segments.iter().next().unwrap().ident) == name {
+                                    // if container is PhantomData then T is wrapped via PhantomData,
+                                    // otherwise we return false immedialy.
+                                    if seg.ident == "PhantomData" {
+                                        ret = true;
+                                    } else {
+                                        return false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return ret;
 }
