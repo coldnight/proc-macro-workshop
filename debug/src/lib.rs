@@ -33,17 +33,40 @@ pub fn derive(input: TokenStream) -> TokenStream {
             }
         }
     }
-    let tokens = quote!{
-        impl std::fmt::Debug for #name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct(stringify!(#name))
-                    .#(#debug_fields).*
-                    .finish()
-            }
+    let mut params = vec![];
+    let mut wheres = vec![];
+    for p in ast.generics.params.iter() {
+        if let syn::GenericParam::Type(t) = p {
+            let name = &t.ident;
+            params.push(name);
+            wheres.push(quote!(#name: std::fmt::Debug))
         }
-    };
-    tokens.into()
+    }
+    if params.len() > 0 {
+        let tokens = quote!{
+            impl<#(#params),*> std::fmt::Debug for #name<#(#params)*> where #(#wheres),* {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.debug_struct(stringify!(#name))
+                        .#(#debug_fields).*
+                        .finish()
+                }
+            }
+        };
+        tokens.into()
+    } else {
+        let tokens = quote!{
+            impl std::fmt::Debug for #name {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.debug_struct(stringify!(#name))
+                        .#(#debug_fields).*
+                        .finish()
+                }
+            }
+        };
+        tokens.into()
+    }
 }
+
 fn parse_debug_attr_value(attr: &syn::Attribute) -> Result<Option<syn::LitStr>, syn::Error> {
     if let Some(seg) = attr.path.segments.first() {
         if seg.ident != "debug" {
