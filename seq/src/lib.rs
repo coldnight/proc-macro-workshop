@@ -1,14 +1,14 @@
-use proc_macro::TokenStream;
-
-use syn::{self, Ident, Token, braced, parse_macro_input};
+use proc_macro::{TokenStream, TokenTree, Delimiter, Group};
+use syn::{self, Ident, Token, braced, parse_macro_input, Expr};
+use syn::punctuated::Punctuated;
 use syn::parse::{Parse};
-
+use quote::{ToTokens, quote};
 
 struct Seq {
     name: Ident,
     start: u32,
     end: u32,
-    tokens: TokenStream,
+    exprs: Punctuated<Expr, Token![;]>,
 }
 
 impl Parse for Seq {
@@ -31,7 +31,7 @@ impl Parse for Seq {
             name: name,
             start: start,
             end: end,
-            tokens: content.cursor().token_stream().into(),
+            exprs: content.parse_terminated(Expr::parse)?,
         })
     }
 }
@@ -39,6 +39,37 @@ impl Parse for Seq {
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
     let s = parse_macro_input!(input as Seq);
-    let result = TokenStream::new();
+    let mut result = TokenStream::new();
+    let p: TokenStream = syn::parse_str::<Token![;]>(";").unwrap().to_token_stream().into();
+    for expr in s.exprs.iter() {
+        let ts: TokenStream = expr.into_token_stream().into();
+        interrupt_ident_to_literal(&s.name, 1, ts, &mut result);
+        result.extend(p.clone());
+    }
     result
+}
+
+
+fn interrupt_ident_to_literal(name: &Ident, lit: u32, input: TokenStream, output: &mut TokenStream) {
+    for tt in input.into_iter() {
+        if let TokenTree::Group(g) = &tt {
+            let mut tmp = TokenStream::new();
+            interrupt_ident_to_literal(name, lit, g.stream(), &mut tmp);
+            let mut new_g = Group::new(g.delimiter(), tmp);
+            new_g.set_span(g.span());
+            let new_tt: TokenTree = new_g.into();
+            let new_ts: TokenStream = new_tt.into();
+            output.extend(new_ts);
+            continue
+        }
+        if let TokenTree::Ident(i) = &tt {
+            if i.to_string() == name.to_string() {
+                let ts = quote!(#lit);
+                output.extend::<TokenStream>(ts.into());
+                continue
+            }
+        }
+        let ts: TokenStream = tt.into();
+        output.extend(ts);
+    }
 }
