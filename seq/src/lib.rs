@@ -1,62 +1,97 @@
-use proc_macro::{TokenStream, TokenTree, Group, Literal};
-use syn::{self, Ident, Token, braced, parse_macro_input, Expr};
-use syn::punctuated::Punctuated;
-use syn::parse::{Parse};
-use quote::{ToTokens};
+use proc_macro::{Group, Literal, TokenStream, TokenTree};
+use proc_macro::token_stream::IntoIter;
+use syn::{self, Ident, LitInt, Token};
 
-struct Seq {
+struct Header {
     name: Ident,
     start: i32,
     end: i32,
-    exprs: Punctuated<Expr, Token![;]>,
-}
-
-impl Parse for Seq {
-    fn parse(input: &syn::parse::ParseBuffer<'_>) -> std::result::Result<Self, syn::Error> {
-        let name: Ident = input.parse()?;
-        input.parse::<Token![in]>()?;
-        let start: i32 = {
-            let lit: syn::LitInt = input.parse()?;
-            lit.base10_parse::<i32>()?
-        };
-        input.parse::<Token![..]>()?;
-        let end: i32 = {
-            let lit: syn::LitInt = input.parse()?;
-            lit.base10_parse::<i32>()?
-        };
-        let content;
-        let _ = braced!(content in input);
-
-        Ok(Seq{
-            name: name,
-            start: start,
-            end: end,
-            exprs: content.parse_terminated(Expr::parse)?,
-        })
-    }
 }
 
 #[proc_macro]
 pub fn seq(input: TokenStream) -> TokenStream {
-    let s = parse_macro_input!(input as Seq);
-    let mut result = TokenStream::new();
-    let p: TokenStream = syn::parse_str::<Token![;]>(";").unwrap().to_token_stream().into();
-    for lit in s.start .. s.end {
-        for expr in s.exprs.clone().iter() {
-            let ts: TokenStream = expr.into_token_stream().into();
-            interrupt_ident_to_literal(&s.name, lit, ts, &mut result);
-            result.extend(p.clone());
-        }
+    match process(input) {
+        Ok(v) => v,
+        Err(e) => e.to_compile_error().into(),
     }
-    result
+}
+
+fn process(input: TokenStream) -> Result<TokenStream, syn::Error> {
+    let mut result = TokenStream::new();
+    let mut iter = input.clone().into_iter();
+    let header = parse_header(&mut iter)?;
+    let body = braced_body(&mut iter)?;
+    for lit in header.start .. header.end {
+        interrupt_ident_to_literal(&header.name, lit, body.clone().into_iter(), &mut result);
+    }
+    Ok(result)
+}
+
+fn parse_header(iter: &mut IntoIter) -> Result<Header, syn::Error> {
+    let name = parse_header_name(iter)?;
+    parse_token::<Token![in]>(iter)?;
+    let start = parse_header_lit(iter)?;
+    parse_token::<Token![.]>(iter)?;
+    parse_token::<Token![.]>(iter)?;
+    let end = parse_header_lit(iter)?;
+    Ok(Header{
+        name,
+        start,
+        end,
+    })
 }
 
 
-fn interrupt_ident_to_literal(name: &Ident, lit: i32, input: TokenStream, output: &mut TokenStream) {
-    for tt in input.into_iter() {
+fn parse_header_name(iter: &mut IntoIter) -> Result<Ident, syn::Error> {
+    if let Some(tt) = iter.next() {
+        let ts: TokenStream = tt.into();
+        let ident: Ident = syn::parse(ts)?;
+        return Ok(ident);
+    }
+    Err(syn::Error::new(proc_macro::Span::call_site().into(), "unexpected eof"))
+}
+
+fn parse_token<T: syn::parse::Parse>(iter: &mut IntoIter) -> Result<(), syn::Error> {
+    if let Some(tt) = iter.next() {
+        let ts: TokenStream = tt.into();
+        let _: T = syn::parse(ts)?;
+        return Ok(());
+    }
+    Err(syn::Error::new(proc_macro::Span::call_site().into(), "unexpected eof"))
+
+}
+
+fn parse_header_lit(iter: &mut IntoIter) -> Result<i32, syn::Error> {
+    if let Some(tt) = iter.next() {
+        let ts: TokenStream = tt.into();
+        let lit: LitInt = syn::parse(ts)?;
+        let v = lit.base10_parse::<i32>()?;
+        return Ok(v);
+    }
+    Err(syn::Error::new(proc_macro::Span::call_site().into(), "unexpected eof"))
+}
+
+fn braced_body(iter: &mut IntoIter) -> Result<TokenStream, syn::Error> {
+    if let Some(tt) = iter.next() {
+        if let proc_macro::TokenTree::Group(g) = tt {
+            match g.delimiter() {
+                proc_macro::Delimiter::Brace => return Ok(g.stream()),
+                _ => {
+                    let err = syn::Error::new(g.span().into(), "unexpected delimiter");
+                    return Err(err);
+                }
+            }
+        }
+        return Err(syn::Error::new(tt.span().into(), "a group is expected"));
+    }
+    return Err(syn::Error::new(proc_macro::Span::call_site().into(), "unexpected eof"));
+}
+
+fn interrupt_ident_to_literal(name: &Ident, lit: i32, iter: IntoIter, output: &mut TokenStream) {
+    for tt in iter {
         if let TokenTree::Group(g) = &tt {
             let mut tmp = TokenStream::new();
-            interrupt_ident_to_literal(name, lit, g.stream(), &mut tmp);
+            interrupt_ident_to_literal(name, lit, g.stream().into_iter(), &mut tmp);
             let mut new_g = Group::new(g.delimiter(), tmp);
             new_g.set_span(g.span());
             let new_tt: TokenTree = new_g.into();
