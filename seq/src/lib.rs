@@ -1,5 +1,6 @@
 use proc_macro::{Group, Literal, TokenStream, TokenTree};
 use proc_macro::token_stream::IntoIter;
+use quote::ToTokens;
 use syn::{self, Ident, LitInt, Token};
 
 struct Header {
@@ -88,8 +89,15 @@ fn braced_body(iter: &mut IntoIter) -> Result<TokenStream, syn::Error> {
 }
 
 fn interrupt_ident_to_literal(name: &Ident, lit: i32, iter: IntoIter, output: &mut TokenStream) {
+    let mut sharp = None;
+    let mut ident_before_sharp: Option<TokenTree> = None;
     for tt in iter {
         if let TokenTree::Group(g) = &tt {
+            if let Some(ident0) = &ident_before_sharp {
+                output.extend::<TokenStream>(ident0.clone().into());
+                ident_before_sharp = None;
+            }
+
             let mut tmp = TokenStream::new();
             interrupt_ident_to_literal(name, lit, g.stream().into_iter(), &mut tmp);
             let mut new_g = Group::new(g.delimiter(), tmp);
@@ -99,14 +107,48 @@ fn interrupt_ident_to_literal(name: &Ident, lit: i32, iter: IntoIter, output: &m
             output.extend(new_ts);
             continue
         }
-        if let TokenTree::Ident(i) = &tt {
-            if i.to_string() == name.to_string() {
-                let ts: TokenTree = Literal::i32_unsuffixed(lit).into();
-                output.extend::<TokenStream>(ts.into());
+
+        // 如果检测到 ident_before_sharp#name 则合并 ident_before_sharp 和 name 追加到结果；
+        // 否则需要将 ident_before_sharp 作为单独的 ident 追加到结果。
+        if let TokenTree::Punct(p) = &tt {
+            if p.as_char() == '#' {
+                sharp = Some(tt.clone());
                 continue
             }
         }
-        let ts: TokenStream = tt.into();
-        output.extend(ts);
+
+        if let TokenTree::Ident(i) = &tt {
+            if i.to_string() == name.to_string() {
+                let t: TokenTree = Literal::i32_unsuffixed(lit).into();
+                let mut ts: TokenStream = t.into();
+                if let Some(_) = sharp {
+                    if let Some(ident0) = &ident_before_sharp {
+                        let new_name = format!("{}{}", ident0, lit);
+                        let new_ident = syn::Ident::new(&&new_name, ident0.span().into());
+                        ts = new_ident.to_token_stream().into();
+                        ident_before_sharp = None; // avoid duplicated extend to result
+                    }
+                    sharp = None;
+                }
+                output.extend(ts);
+                continue
+            }
+
+            if let Some(ident0) = &ident_before_sharp {
+                output.extend::<TokenStream>(ident0.clone().into());
+            }
+            ident_before_sharp = Some(tt.clone());
+            continue;
+        }
+        if let Some(ident0) = &ident_before_sharp {
+            output.extend::<TokenStream>(ident0.clone().into());
+            ident_before_sharp = None;
+        }
+        // append the sharp if has any
+        if let Some(s) = &sharp {
+            output.extend::<TokenStream>(s.clone().into());
+            sharp = None;
+        }
+        output.extend::<TokenStream>(tt.into());
     }
 }
